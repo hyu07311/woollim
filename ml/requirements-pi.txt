@@ -1,0 +1,6 @@
+# Raspberry Pi 4 (64-bit OS, Python 3.9+)
+numpy
+soundfile          # 파일 입력 (sudo apt install libsndfile1)
+scipy              # 16 kHz가 아닌 wav 리샘플
+sounddevice        # 마이크 입력 (sudo apt install libportaudio2)
+ai-edge-litert     # TFLite 런타임. 설치 안 되면: pip install tflite-runtime
