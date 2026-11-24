@@ -66,6 +66,9 @@ class Config:
             c.hop = d.get("hop", c.hop)
             c.labels = tuple(d.get("labels", c.labels))
             c.thresholds = {**c.thresholds, **d.get("thresholds", {})}
+            sm = d.get("smoothing", {})
+            c.smooth_n = int(sm.get("n", c.smooth_n))
+            c.smooth_k = int(sm.get("k", c.smooth_k))
         return c
 
 

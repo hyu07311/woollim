@@ -1,40 +1,81 @@
 {
-  "thresholds": {
-    "siren": 0.49,
-    "horn": 0.28719113096594845
+  "operating_point": {
+    "rule": "2-of-3",
+    "alpha": 0.01,
+    "thresholds": {
+      "siren": 0.773,
+      "horn": 0.505
+    }
   },
+  "note": "clip_* = 2-of-3 rule per test clip; false_alarms_per_hour counted on background-only test clips. pr_auc is threshold-free (window level). Source: notebook cell 16 (rule sweep), see rule_sweep.csv.",
   "test_clean": {
     "siren": {
       "pr_auc": 0.747,
-      "window_precision": 0.767,
-      "window_recall": 0.637,
-      "clip_recall": 0.714,
-      "clip_false_alarm_rate": 0.0209
+      "clip_recall": 0.615,
+      "clip_false_alarm_rate": 0.0036,
+      "false_alarms_per_hour": 3.2
     },
     "horn": {
       "pr_auc": 0.456,
-      "window_precision": 0.253,
-      "window_recall": 0.652,
-      "clip_recall": 0.714,
-      "clip_false_alarm_rate": 0.0196
+      "clip_recall": 0.643,
+      "clip_false_alarm_rate": 0.0034,
+      "false_alarms_per_hour": 3.2
     },
-    "false_alarms_per_hour": 35.3
+    "false_alarms_per_hour": 6.4
   },
   "test_car": {
     "siren": {
       "pr_auc": 0.678,
-      "window_precision": 0.667,
-      "window_recall": 0.592,
-      "clip_recall": 0.736,
-      "clip_false_alarm_rate": 0.0364
+      "clip_recall": 0.67,
+      "clip_false_alarm_rate": 0.0155,
+      "false_alarms_per_hour": 13.7
     },
     "horn": {
       "pr_auc": 0.298,
-      "window_precision": 0.14,
-      "window_recall": 0.514,
       "clip_recall": 0.643,
-      "clip_false_alarm_rate": 0.0349
+      "clip_false_alarm_rate": 0.0136,
+      "false_alarms_per_hour": 12.1
     },
-    "false_alarms_per_hour": 62.2
+    "false_alarms_per_hour": 25.8
+  },
+  "previous_operating_point_alpha_0.03": {
+    "thresholds": {
+      "siren": 0.49,
+      "horn": 0.28719113096594845
+    },
+    "test_clean": {
+      "siren": {
+        "pr_auc": 0.747,
+        "window_precision": 0.767,
+        "window_recall": 0.637,
+        "clip_recall": 0.714,
+        "clip_false_alarm_rate": 0.0209
+      },
+      "horn": {
+        "pr_auc": 0.456,
+        "window_precision": 0.253,
+        "window_recall": 0.652,
+        "clip_recall": 0.714,
+        "clip_false_alarm_rate": 0.0196
+      },
+      "false_alarms_per_hour": 35.3
+    },
+    "test_car": {
+      "siren": {
+        "pr_auc": 0.678,
+        "window_precision": 0.667,
+        "window_recall": 0.592,
+        "clip_recall": 0.736,
+        "clip_false_alarm_rate": 0.0364
+      },
+      "horn": {
+        "pr_auc": 0.298,
+        "window_precision": 0.14,
+        "window_recall": 0.514,
+        "clip_recall": 0.643,
+        "clip_false_alarm_rate": 0.0349
+      },
+      "false_alarms_per_hour": 62.2
+    }
   }
 }

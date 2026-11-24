@@ -7,8 +7,8 @@
     "horn"
   ],
   "thresholds": {
-    "siren": 0.49,
-    "horn": 0.28719113096594845
+    "siren": 0.773,
+    "horn": 0.505
   },
   "input": "float32 mono -1..1",
   "output": "sigmoid probabilities",
@@ -16,5 +16,10 @@
     "ESC-50",
     "UrbanSound8K"
   ],
-  "created": "2026-11-24T14:11:46"
+  "created": "2026-11-24T14:11:46",
+  "smoothing": {
+    "n": 3,
+    "k": 2
+  },
+  "operating_point": "validation clip false-alarm rate <= 1% under 2-of-3 rule"
 }
