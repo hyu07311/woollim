@@ -1,0 +1,20 @@
+{
+  "sample_rate": 16000,
+  "window": 15600,
+  "hop": 8000,
+  "labels": [
+    "siren",
+    "horn"
+  ],
+  "thresholds": {
+    "siren": 0.49,
+    "horn": 0.28719113096594845
+  },
+  "input": "float32 mono -1..1",
+  "output": "sigmoid probabilities",
+  "trained_on": [
+    "ESC-50",
+    "UrbanSound8K"
+  ],
+  "created": "2026-11-24T14:11:46"
+}
