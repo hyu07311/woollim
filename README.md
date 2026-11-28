@@ -4,7 +4,7 @@
 
 - `android/` — 알림 앱 (Kotlin, Jetpack Compose)
 - `ml/` — 사이렌·경적 감지 모델 학습(Colab)과 Pi용 참조 추론 코드 → [`ml/MODEL_CARD.md`](ml/MODEL_CARD.md)
-- 감지 장치(Raspberry Pi) 통합 코드는 추후 추가
+- `pi/` — 감지 장치(Raspberry Pi 4) 실행 프로그램: 마이크 → 모델 → BLE로 앱에 경고 전송 → [`pi/README.md`](pi/README.md)
 
 ## 앱 빌드
 

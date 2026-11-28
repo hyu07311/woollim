@@ -27,6 +27,8 @@ import com.vintagesheep.woollim.ui.theme.Palette
 fun SettingsScreen(vm: MainViewModel) {
     val connection by vm.connection.collectAsStateWithLifecycle()
     val latency by vm.lastLatencyMs.collectAsStateWithLifecycle()
+    val source by vm.source.collectAsStateWithLifecycle()
+    val demoMode by vm.demoMode.collectAsStateWithLifecycle()
 
     Column(
         Modifier
@@ -47,8 +49,32 @@ fun SettingsScreen(vm: MainViewModel) {
                     }
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(vm.source.name, fontSize = 15.sp, color = Palette.Text, modifier = Modifier.weight(1f))
+                Text(source.name, fontSize = 15.sp, color = Palette.Text, modifier = Modifier.weight(1f))
                 Text(connection.label, fontSize = 13.sp, color = Palette.TextMuted)
+            }
+            if (!demoMode && connection != ConnectionState.CONNECTED) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "라즈베리파이를 켜고 블루투스를 켜 두면 자동으로 연결돼요",
+                    fontSize = 13.sp,
+                    color = Palette.TextMuted,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("시연 모드", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+                    Text("감지 장치 없이 가짜 이벤트로 확인", fontSize = 12.sp, color = Palette.TextMuted)
+                }
+                Switch(
+                    checked = demoMode,
+                    onCheckedChange = vm::setDemoMode,
+                    colors = SwitchDefaults.colors(checkedTrackColor = Palette.Primary),
+                )
+            }
+            if (!demoMode) {
+                Spacer(Modifier.height(8.dp))
+                OutlinePill("감지 장치 다시 찾기", Palette.Primary, Modifier.fillMaxWidth(), vm::reconnect)
             }
         }
 
@@ -70,7 +96,7 @@ fun SettingsScreen(vm: MainViewModel) {
             }
         }
 
-        if (vm.isMock) {
+        if (demoMode) {
             Section("시연 모드", trailing = "수신→표시 ${latency?.let { "${it}ms" } ?: "-"}") {
                 Text("Pi 없이 가짜 이벤트로 알림 화면과 진동을 확인합니다", fontSize = 13.sp, color = Palette.TextMuted)
                 Spacer(Modifier.height(10.dp))

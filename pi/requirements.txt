@@ -1,0 +1,3 @@
+# Raspberry Pi 4 감지 장치 (ml/requirements-pi.txt 도 함께 설치)
+-r ../ml/requirements-pi.txt
+bless              # BLE GATT 서버 (BlueZ)

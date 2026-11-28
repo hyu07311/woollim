@@ -78,7 +78,7 @@ private fun ReportShown(spec: AlertSpec, onShown: (HazardEvent, Long) -> Unit) {
 }
 
 @Composable
-private fun UrgentAlert(
+internal fun UrgentAlert(
     spec: AlertSpec,
     latencyMs: Long?,
     showDebug: Boolean,
@@ -189,7 +189,7 @@ private fun UrgentAlert(
 }
 
 @Composable
-private fun CautionBanner(
+internal fun CautionBanner(
     spec: AlertSpec,
     latencyMs: Long?,
     showDebug: Boolean,
