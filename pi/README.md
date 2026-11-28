@@ -25,9 +25,12 @@ pip install -r pi/requirements.txt
 ```bash
 cd ~/woollim/pi
 python main.py --fake      # 1) 먼저 가짜 시나리오로 연결 확인 (10초마다 경적 → 사이렌 주의 → 긴급 → 기록)
-python main.py             # 2) 마이크 + 모델 (스피커로 사이렌을 들려주세요)
-python main.py --probs     #    창별 확률도 함께 출력
+python main.py             # 2) 마이크 + 모델 v1 (시작 3초는 주변 소음 측정 → 조용히)
+python main.py --probs     #    창별 확률·무음 판정도 함께 출력
+python main.py --config ../ml/model_config.json   # 이전 모델 v0으로 실행
 ```
+- 기본 모델은 **`ml/v1`** (팀원 최종 모델, 2초 창). 자세한 내용은 [`ml/v1/README.md`](../ml/v1/README.md)
+- 무음 필터: 시작 3초 동안 주변 소음을 재서 그보다 3 dB 이상 큰 소리만 판정합니다. 끄려면 `--no-gate`
 - 앱을 켜고 **설정 → 시연 모드 끄기**를 하면 자동으로 찾아서 연결합니다.
 - 마이크 장치는 기본으로 ALSA `mic`(~/.asoundrc)를 씁니다. 다른 장치는 `--device 번호`.
 

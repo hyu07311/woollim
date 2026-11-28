@@ -1,0 +1,18 @@
+# 실시간 감지 테스트용 설정 - tools/threshold_study.py 선택 결과 (2026-11-28 17:58)
+# 선택 기준: 실제 dev 녹음 오경보 <= 1.0/분, validation 배경 경보율 <= 0.05
+#           그중 실제 dev 경적+사이렌 감지 최대 (test 녹음은 확인용). 학습 결과의 임계값 파일은 수정하지 않음.
+# dev: 감지 2/4, 오경보 0.00/분, val 배경 경보율 0.016
+thresholds:
+  horn: 0.9802732467651367
+  siren: 0.9996480941772461
+smoothing_n: 3
+smoothing_k: 2
+short_horn_single_window: 0.9
+hysteresis_off_ratio: 0.7
+cooldown_sec: 3.0
+agc_max_gain_db: null
+exclusive: true
+silence_gate:
+  enabled: true
+  margin_db: 3.0
+  floor_db: -85.0

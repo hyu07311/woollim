@@ -56,6 +56,17 @@ class Config:
     # 위험 단계 규칙
     urgent_min_conf: float = 0.8
 
+    # ── v1 모델용 (기본값은 v0 동작과 같음) ──
+    model: Path | None = None              # 설정 파일 기준 모델 경로 ("model" 키)
+    output_labels: tuple | None = None     # 모델 출력 순서. 예) v1 = (background, horn, siren)
+    off_ratio: float = 1.0                 # 종료: 최근 N창 모두 임계값×off_ratio 미만
+    short_horn: float | None = None        # 경적 1창만으로 즉시 시작하는 기준 (max(이 값, 임계값))
+    cooldown_s: float = 0.0                # 같은 클래스 재시작 최소 간격
+    gate_enabled: bool = False             # 무음 필터 (pi/main.py 마이크 모드)
+    gate_margin_db: float = 3.0
+    gate_floor_db: float = -85.0
+    calibrate_sec: float = 3.0
+
     @classmethod
     def load(cls, path: Path) -> "Config":
         c = cls()
@@ -69,6 +80,18 @@ class Config:
             sm = d.get("smoothing", {})
             c.smooth_n = int(sm.get("n", c.smooth_n))
             c.smooth_k = int(sm.get("k", c.smooth_k))
+            c.off_ratio = float(sm.get("off_ratio", c.off_ratio))
+            c.short_horn = sm.get("short_horn", c.short_horn)
+            c.cooldown_s = float(sm.get("cooldown_sec", c.cooldown_s))
+            if "model" in d:
+                c.model = (path.parent / d["model"]).resolve()
+            if "output_labels" in d:
+                c.output_labels = tuple(d["output_labels"])
+            sg = d.get("silence_gate", {})
+            c.gate_enabled = bool(sg.get("enabled", c.gate_enabled))
+            c.gate_margin_db = float(sg.get("margin_db", c.gate_margin_db))
+            c.gate_floor_db = float(sg.get("floor_db", c.gate_floor_db))
+            c.calibrate_sec = float(sg.get("calibrate_sec", c.calibrate_sec))
         return c
 
 
@@ -93,19 +116,26 @@ def _load_interpreter_class():
 
 
 class SoundModel:
-    """입력: float32 [window] (16 kHz 모노, -1..1) → 출력: float32 [len(labels)] (sigmoid 확률)"""
+    """
+    입력: float32 [window] (16 kHz 모노, -1..1) → 출력: float32 [len(cfg.labels)] (cfg.labels 순서의 확률)
+    모델 출력 순서가 다르면(v1: background, horn, siren) cfg.output_labels로 재배열한다.
+    """
 
-    def __init__(self, model_path: Path, num_threads: int = 2):
+    def __init__(self, model_path: Path, num_threads: int = 2, cfg: "Config | None" = None):
         Interpreter = _load_interpreter_class()
         self.it = Interpreter(model_path=str(model_path), num_threads=num_threads)
         self.it.allocate_tensors()
         self.inp = self.it.get_input_details()[0]["index"]
         self.out = self.it.get_output_details()[0]["index"]
+        self.idx = None
+        if cfg is not None and cfg.output_labels is not None:
+            self.idx = [cfg.output_labels.index(lab) for lab in cfg.labels]
 
     def __call__(self, window: np.ndarray) -> np.ndarray:
         self.it.set_tensor(self.inp, window.astype(np.float32))
         self.it.invoke()
-        return np.asarray(self.it.get_tensor(self.out), dtype=np.float32).reshape(-1)
+        p = np.asarray(self.it.get_tensor(self.out), dtype=np.float32).reshape(-1)
+        return p[self.idx] if self.idx is not None else p
 
 
 # ─────────────────────────── 후처리 ───────────────────────────
@@ -115,6 +145,19 @@ LEVEL_RANK = {"log": 0, "caution": 1, "urgent": 2}
 
 def rms_db(x: np.ndarray) -> float:
     return float(20 * np.log10(np.sqrt(np.mean(np.square(x, dtype=np.float64))) + 1e-10))
+
+
+def activity_db(x: np.ndarray, sr: int, frame_s: float = 0.05, pct: float = 90.0) -> float:
+    """
+    무음 필터용 활동도: 50 ms 프레임 에너지(dBFS)의 상위 10%(p90).
+    평균 RMS를 쓰면 2초 창 안의 짧은 경적이 묻히므로 p90을 쓴다 (v1 원본 src/inference/silence.py와 같은 정의).
+    """
+    n = max(int(sr * frame_s), 1)
+    m = len(x) // n
+    if m == 0:
+        return float(10 * np.log10(np.mean(np.square(x, dtype=np.float64)) + 1e-14))
+    fr = x[: m * n].reshape(m, n).astype(np.float64)
+    return float(np.percentile(10 * np.log10((fr ** 2).mean(1) + 1e-14), pct))
 
 
 @dataclass
@@ -136,6 +179,8 @@ class HazardDetector:
         self.speed_kmh: int | None = None   # 앱 → Pi 속도 메시지로 갱신 (없으면 규칙에 안 씀)
         self.tracks = {lab: _Track(hits=deque(maxlen=cfg.smooth_n)) for lab in cfg.labels}
         self.recent = deque(maxlen=cfg.smooth_n)   # 최근 창들의 (확률, dB) — 시작 판정 구간 복원용
+        self.recent_p = {lab: deque(maxlen=cfg.smooth_n) for lab in cfg.labels}  # 종료 판정용 확률
+        self.last_start_ms = {lab: -10**12 for lab in cfg.labels}               # 쿨다운용
 
     # 앱이 보낸 {"v":1,"speed_kmh":..,"t_app":..} 처리
     def on_app_message(self, raw: str) -> None:
@@ -152,15 +197,26 @@ class HazardDetector:
         self.recent.append((np.asarray(probs, dtype=np.float32), level_db))
         for i, lab in enumerate(self.cfg.labels):
             p = float(probs[i])
+            th = self.cfg.thresholds[lab]
             tr = self.tracks[lab]
-            tr.hits.append(p >= self.cfg.thresholds[lab])
+            tr.hits.append(p >= th)
+            self.recent_p[lab].append(p)
             n_hit = sum(tr.hits)
 
             if not tr.active:
-                if n_hit >= self.cfg.smooth_k:
+                start = n_hit >= self.cfg.smooth_k
+                # v1: 짧은 경적은 1창만으로 즉시 시작 (임계값보다 낮은 기준은 쓰지 않음)
+                if (not start and lab == "horn" and self.cfg.short_horn is not None
+                        and p >= max(float(self.cfg.short_horn), th)):
+                    start = True
+                # v1: 같은 클래스 재경고 최소 간격
+                if start and t_ms - self.last_start_ms[lab] < self.cfg.cooldown_s * 1000:
+                    start = False
+                if start:
+                    self.last_start_ms[lab] = t_ms
                     tr.active = True
                     # 시작 판정에 쓰인 창들(첫 초과 창부터)도 구간에 포함 → 접근 여부를 더 빨리 판단
-                    first = list(tr.hits).index(True)
+                    first = list(tr.hits).index(True) if any(tr.hits) else len(tr.hits) - 1
                     seed = list(self.recent)[first:]
                     tr.windows = len(seed)
                     tr.probs = [float(pp[i]) for pp, _ in seed]
@@ -168,7 +224,9 @@ class HazardDetector:
                     tr.emitted_level = None
                     out += self._maybe_emit(lab, tr, t_ms)
             else:
-                if n_hit == 0 and len(tr.hits) == self.cfg.smooth_n:
+                ps = self.recent_p[lab]
+                off_th = th * self.cfg.off_ratio   # v0: off_ratio=1 → "N창 모두 임계 미만"과 같음
+                if len(ps) == self.cfg.smooth_n and all(v < off_th for v in ps):
                     tr.active = False          # 이벤트 종료
                     continue
                 tr.windows += 1
@@ -335,7 +393,7 @@ def run_bench(model: SoundModel, cfg: Config, n: int = 50) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("wav", nargs="?", type=Path, help="입력 wav 파일")
-    ap.add_argument("--model", type=Path, default=HERE / "woollim_sound.tflite")
+    ap.add_argument("--model", type=Path, default=None, help="기본: 설정 파일의 model, 없으면 woollim_sound.tflite (v0)")
     ap.add_argument("--config", type=Path, default=HERE / "model_config.json")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--probs", action="store_true", help="창별 확률을 stderr로 출력")
@@ -346,7 +404,7 @@ def main() -> None:
     a = ap.parse_args()
 
     cfg = Config.load(a.config)
-    model = SoundModel(a.model, a.threads)
+    model = SoundModel(a.model or cfg.model or HERE / "woollim_sound.tflite", a.threads, cfg)
     if a.bench:
         run_bench(model, cfg)
     elif a.check:

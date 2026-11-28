@@ -1,0 +1,27 @@
+{
+  "model": "woollim_sound_v1.tflite",
+  "sample_rate": 16000,
+  "window": 32000,
+  "hop": 8000,
+  "labels": ["siren", "horn"],
+  "output_labels": ["background", "horn", "siren"],
+  "output": "softmax probabilities [background, horn, siren]",
+  "thresholds": {
+    "siren": 0.9996480941772461,
+    "horn": 0.9802732467651367
+  },
+  "smoothing": {
+    "n": 3,
+    "k": 2,
+    "off_ratio": 0.7,
+    "short_horn": 0.9,
+    "cooldown_sec": 3.0
+  },
+  "silence_gate": {
+    "enabled": true,
+    "margin_db": 3.0,
+    "floor_db": -85.0,
+    "calibrate_sec": 3.0
+  },
+  "source": "SoundDetection_Final (YAMNet + max pooling head), configs/realtime_final.yaml"
+}

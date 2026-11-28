@@ -5,6 +5,7 @@
   python main.py --fake          # 모델·마이크 없이 정해진 시나리오를 BLE로 전송 (연결 확인·시연 대체용)
 
 모델 추론과 후처리는 ml/inference_reference.py 를 그대로 쓴다 (Config, SoundModel, HazardDetector).
+기본 모델은 ml/v1 (팀원 최종 모델). v0으로 돌리려면 --config ../ml/model_config.json
 """
 from __future__ import annotations
 
@@ -74,13 +75,16 @@ async def run_fake(ble: WoollimBle, interval: float) -> None:
 async def run_mic(ble: WoollimBle, args) -> None:
     import numpy as np
     import sounddevice as sd
-    from inference_reference import Config, HazardDetector, SoundModel, input_level, rms_db
+    from inference_reference import (Config, HazardDetector, SoundModel, activity_db, input_level,
+                                     rms_db)
 
     cfg = Config.load(args.config)
-    model = SoundModel(args.model, args.threads)
+    model_path = args.model or cfg.model or ML / "woollim_sound.tflite"
+    model = SoundModel(model_path, args.threads, cfg)
     det = HazardDetector(cfg)
     loop = asyncio.get_running_loop()
     q: asyncio.Queue = asyncio.Queue()
+    sr = cfg.sample_rate
 
     block = cfg.hop // 5  # 0.1 s 블록 → 레벨 10 Hz, 5블록(= hop 0.5 s)마다 추론
 
@@ -89,23 +93,51 @@ async def run_mic(ble: WoollimBle, args) -> None:
             print(f"# {status}", file=sys.stderr)
         loop.call_soon_threadsafe(q.put_nowait, indata[:, 0].copy())
 
+    use_gate = cfg.gate_enabled and not args.no_gate
+    calib_left = int(cfg.calibrate_sec * sr) if use_gate else 0
+    calib: list = []
+    gate_db = cfg.gate_floor_db
+
     buf = np.zeros(cfg.window, dtype=np.float32)
     since_infer = 0
-    log.info("마이크 입력 시작 (장치: %s). 사이렌을 들려주세요. Ctrl+C 종료", args.device)
-    with sd.InputStream(samplerate=cfg.sample_rate, channels=1, dtype="float32",
+    log.info("모델: %s (창 %.2f s)", Path(model_path).name, cfg.window / sr)
+    log.info("마이크 입력 시작 (장치: %s). Ctrl+C 종료", args.device)
+    if calib_left:
+        log.info("주변 소음 측정 중 (%.0f초) - 조용히 기다려 주세요", cfg.calibrate_sec)
+    with sd.InputStream(samplerate=sr, channels=1, dtype="float32",
                         blocksize=block, device=args.device, callback=cb):
         while True:
             b = await q.get()
             buf = np.concatenate([buf[len(b):], b])
             ble.send_level(input_level(rms_db(b)))
+
+            # 무음 필터 보정: 시작 몇 초 동안 주변 소음만 모은다 (판정 안 함)
+            if calib_left > 0:
+                calib.append(b)
+                calib_left -= len(b)
+                if calib_left <= 0:
+                    amb = np.concatenate(calib)
+                    win, hop = cfg.window, cfg.hop
+                    acts = [activity_db(amb[i:i + win], sr) for i in range(0, max(len(amb) - win, 0) + 1, hop)]
+                    gate_db = max(cfg.gate_floor_db, float(np.median(acts)) + cfg.gate_margin_db)
+                    log.info("무음 기준 %.1f dBFS (주변소음 중앙값 + %.0f dB). 감지 시작", gate_db, cfg.gate_margin_db)
+                continue
+
             since_infer += len(b)
             if since_infer < cfg.hop:
                 continue
             since_infer -= cfg.hop
             window = buf.copy()
-            probs = await loop.run_in_executor(None, model, window)
-            if args.probs:
-                print(f"# siren {probs[0]:.2f}  horn {probs[1]:.2f}", file=sys.stderr)
+            act = activity_db(window, sr)
+            if use_gate and act < gate_db:
+                probs = np.zeros(len(cfg.labels), dtype=np.float32)   # 무음 창은 모델 확률을 쓰지 않음
+                if args.probs:
+                    print(f"# [무음] 활동 {act:6.1f} < 기준 {gate_db:6.1f} dBFS", file=sys.stderr)
+            else:
+                probs = await loop.run_in_executor(None, model, window)
+                if args.probs:
+                    txt = "  ".join(f"{lab} {p:.3f}" for lab, p in zip(cfg.labels, probs))
+                    print(f"# {txt}  (활동 {act:6.1f} dBFS)", file=sys.stderr)
             for ev in det.push(probs, rms_db(window), t_ms=int(time.time() * 1000)):
                 ble.send_event(ev)
 
@@ -129,8 +161,10 @@ def main() -> None:
     ap.add_argument("--fake", action="store_true", help="모델 없이 가짜 시나리오 전송")
     ap.add_argument("--interval", type=float, default=10.0, help="--fake 시나리오 반복 간격(초)")
     ap.add_argument("--device", default="mic", help="sounddevice 입력 장치 이름/번호 (기본: ALSA 'mic')")
-    ap.add_argument("--model", type=Path, default=ML / "woollim_sound.tflite")
-    ap.add_argument("--config", type=Path, default=ML / "model_config.json")
+    ap.add_argument("--config", type=Path, default=ML / "v1" / "model_config.json",
+                    help="모델 설정 (기본: v1 최종 모델, v0은 ../ml/model_config.json)")
+    ap.add_argument("--model", type=Path, default=None, help="기본: 설정 파일의 model")
+    ap.add_argument("--no-gate", action="store_true", help="무음 필터 끄기")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--probs", action="store_true", help="창별 확률을 stderr로 출력")
     ap.add_argument("-v", "--verbose", action="store_true")

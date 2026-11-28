@@ -1,0 +1,4 @@
+sample,class,orig_file,source,license,duration,split
+sample_siren.wav,siren,siren/siren_figshare_0035.wav,figshare,CC0,10.52,test
+sample_horn.wav,horn,horn/horn_fsd50k_0138.wav,fsd50k,http://creativecommons.org/licenses/by/3.0/,7.28,test
+sample_background.wav,background,background/bg_figshare_0558.wav,figshare,CC0,11.69,test

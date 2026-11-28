@@ -1,0 +1,27 @@
+{
+  "classes(모델 출력 순서)": [
+    "background",
+    "horn",
+    "siren"
+  ],
+  "display": {
+    "background": "배경 소음",
+    "horn": "경적",
+    "siren": "사이렌"
+  },
+  "teacher_audioset_classes(학습 데이터 구간 선택용)": {
+    "horn": [
+      "Vehicle horn, car horn, honking",
+      "Toot",
+      "Air horn, truck horn"
+    ],
+    "siren": [
+      "Siren",
+      "Civil defense siren",
+      "Police car (siren)",
+      "Ambulance (siren)",
+      "Fire engine, fire truck (siren)",
+      "Emergency vehicle"
+    ]
+  }
+}
