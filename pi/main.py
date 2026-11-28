@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import logging
 import random
 import sys
@@ -19,6 +20,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ML = HERE.parent / "ml"
+LOG_DIR = HERE / "logs"   # 실행 기록 CSV (git에는 올리지 않음)
 sys.path.insert(0, str(ML))
 
 from woollim_ble import WoollimBle  # noqa: E402
@@ -98,48 +100,79 @@ async def run_mic(ble: WoollimBle, args) -> None:
     calib: list = []
     gate_db = cfg.gate_floor_db
 
+    # 창별 기록 CSV (오디오는 저장하지 않고 숫자만 남긴다)
+    log_f = writer = None
+    if not args.no_log:
+        LOG_DIR.mkdir(exist_ok=True)
+        log_path = LOG_DIR / time.strftime("%Y%m%d_%H%M%S.csv")
+        log_f = open(log_path, "w", newline="", encoding="utf-8-sig")  # 엑셀에서 한글이 깨지지 않게 BOM
+        writer = csv.writer(log_f)
+        writer.writerow(["time", "t_sec", *cfg.labels, "activity_db", "gate_db", "silent",
+                         "rms_db", "infer_ms", "events"])
+        log.info("기록 파일: %s", log_path)
+    t0 = time.time()
+
     buf = np.zeros(cfg.window, dtype=np.float32)
     since_infer = 0
     log.info("모델: %s (창 %.2f s)", Path(model_path).name, cfg.window / sr)
     log.info("마이크 입력 시작 (장치: %s). Ctrl+C 종료", args.device)
     if calib_left:
         log.info("주변 소음 측정 중 (%.0f초) - 조용히 기다려 주세요", cfg.calibrate_sec)
-    with sd.InputStream(samplerate=sr, channels=1, dtype="float32",
-                        blocksize=block, device=args.device, callback=cb):
-        while True:
-            b = await q.get()
-            buf = np.concatenate([buf[len(b):], b])
-            ble.send_level(input_level(rms_db(b)))
+    try:
+        with sd.InputStream(samplerate=sr, channels=1, dtype="float32",
+                            blocksize=block, device=args.device, callback=cb):
+            while True:
+                b = await q.get()
+                buf = np.concatenate([buf[len(b):], b])
+                ble.send_level(input_level(rms_db(b)))
 
-            # 무음 필터 보정: 시작 몇 초 동안 주변 소음만 모은다 (판정 안 함)
-            if calib_left > 0:
-                calib.append(b)
-                calib_left -= len(b)
-                if calib_left <= 0:
-                    amb = np.concatenate(calib)
-                    win, hop = cfg.window, cfg.hop
-                    acts = [activity_db(amb[i:i + win], sr) for i in range(0, max(len(amb) - win, 0) + 1, hop)]
-                    gate_db = max(cfg.gate_floor_db, float(np.median(acts)) + cfg.gate_margin_db)
-                    log.info("무음 기준 %.1f dBFS (주변소음 중앙값 + %.0f dB). 감지 시작", gate_db, cfg.gate_margin_db)
-                continue
+                # 무음 필터 보정: 시작 몇 초 동안 주변 소음만 모은다 (판정 안 함)
+                if calib_left > 0:
+                    calib.append(b)
+                    calib_left -= len(b)
+                    if calib_left <= 0:
+                        amb = np.concatenate(calib)
+                        win, hop = cfg.window, cfg.hop
+                        acts = [activity_db(amb[i:i + win], sr) for i in range(0, max(len(amb) - win, 0) + 1, hop)]
+                        gate_db = max(cfg.gate_floor_db, float(np.median(acts)) + cfg.gate_margin_db)
+                        log.info("무음 기준 %.1f dBFS (주변소음 중앙값 + %.0f dB). 감지 시작", gate_db, cfg.gate_margin_db)
+                    continue
 
-            since_infer += len(b)
-            if since_infer < cfg.hop:
-                continue
-            since_infer -= cfg.hop
-            window = buf.copy()
-            act = activity_db(window, sr)
-            if use_gate and act < gate_db:
-                probs = np.zeros(len(cfg.labels), dtype=np.float32)   # 무음 창은 모델 확률을 쓰지 않음
-                if args.probs:
-                    print(f"# [무음] 활동 {act:6.1f} < 기준 {gate_db:6.1f} dBFS", file=sys.stderr)
-            else:
-                probs = await loop.run_in_executor(None, model, window)
-                if args.probs:
-                    txt = "  ".join(f"{lab} {p:.3f}" for lab, p in zip(cfg.labels, probs))
-                    print(f"# {txt}  (활동 {act:6.1f} dBFS)", file=sys.stderr)
-            for ev in det.push(probs, rms_db(window), t_ms=int(time.time() * 1000)):
-                ble.send_event(ev)
+                since_infer += len(b)
+                if since_infer < cfg.hop:
+                    continue
+                since_infer -= cfg.hop
+                window = buf.copy()
+                act = activity_db(window, sr)
+                silent = use_gate and act < gate_db
+                infer_ms = 0.0
+                if silent:
+                    probs = np.zeros(len(cfg.labels), dtype=np.float32)   # 무음 창은 모델 확률을 쓰지 않음
+                    if args.probs:
+                        print(f"# [무음] 활동 {act:6.1f} < 기준 {gate_db:6.1f} dBFS", file=sys.stderr)
+                else:
+                    t_inf = time.perf_counter()
+                    probs = await loop.run_in_executor(None, model, window)
+                    infer_ms = (time.perf_counter() - t_inf) * 1000
+                    if args.probs:
+                        txt = "  ".join(f"{lab} {p:.3f}" for lab, p in zip(cfg.labels, probs))
+                        print(f"# {txt}  (활동 {act:6.1f} dBFS, {infer_ms:.0f} ms)", file=sys.stderr)
+                level_db = rms_db(window)
+                events = det.push(probs, level_db, t_ms=int(time.time() * 1000))
+                for ev in events:
+                    ble.send_event(ev)
+                if writer:
+                    now = time.time()
+                    writer.writerow([
+                        time.strftime("%H:%M:%S", time.localtime(now)), f"{now - t0:.1f}",
+                        *(f"{p:.4f}" for p in probs), f"{act:.1f}", f"{gate_db:.1f}", int(silent),
+                        f"{level_db:.1f}", f"{infer_ms:.0f}",
+                        ";".join(f"{e['cls']}:{e['lvl']}:{e['trend']}" for e in events),
+                    ])
+                    log_f.flush()
+    finally:
+        if log_f:
+            log_f.close()
 
 
 # ─────────────────────────── 실행 ───────────────────────────
@@ -165,6 +198,7 @@ def main() -> None:
                     help="모델 설정 (기본: v1 최종 모델, v0은 ../ml/model_config.json)")
     ap.add_argument("--model", type=Path, default=None, help="기본: 설정 파일의 model")
     ap.add_argument("--no-gate", action="store_true", help="무음 필터 끄기")
+    ap.add_argument("--no-log", action="store_true", help="pi/logs/ 에 창별 기록 CSV를 남기지 않음")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--probs", action="store_true", help="창별 확률을 stderr로 출력")
     ap.add_argument("-v", "--verbose", action="store_true")
